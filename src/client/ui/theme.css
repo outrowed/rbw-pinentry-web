@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+    --color-page: #ffffee;
+    --color-page-header: #ffe0bd;
+    --color-paper: #ffffff;
+    --color-ink: #000000;
+    --color-muted: #555555;
+    --color-border: #cc1105;
+    --color-accent: #800000;
+    --color-accent-dark: #540000;
+    --color-accent-soft: #f0c6a4;
+    --color-meta-border: #e5cbbd;
+    --color-meta-caption: #725548;
+    --color-error: #8b140d;
+    --color-error-bg: #fff5ee;
+    --color-success: #314d18;
+    --color-success-bg: #f5f8e9;
+    --color-ui-border: #c28a6e;
+    --color-ui-paper: #fff8ee;
+    --color-button-neutral: #f2eee8;
+    --color-button-hover: #e5ded6;
+    --font-sans: "Helvetica Neue", system-ui;
+}
+
+@layer base {
+    * {
+        box-sizing: border-box;
+    }
+
+    html {
+        min-width: 320px;
+        min-height: 100%;
+        background: var(--color-page);
+        color: var(--color-ink);
+        font-family: "Helvetica Neue", system-ui;
+        font-size: 16px;
+    }
+
+    body {
+        min-height: 100vh;
+        margin: 0;
+        background: var(--color-page);
+    }
+
+    button,
+    input {
+        font: inherit;
+    }
+
+    button:focus-visible,
+    input:focus-visible {
+        outline: 2px solid #2b5797;
+        outline-offset: 2px;
+    }
+
+    #root,
+    #root > main,
+    #root > main > div {
+        min-height: 100svh;
+    }
+
+    ::selection {
+        background: #ffdda6;
+        color: #000;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+    }
+}

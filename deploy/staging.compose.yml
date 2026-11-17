@@ -1,0 +1,41 @@
+name: rbw-web-pinentry-staging
+services:
+  app:
+    build:
+      context: ..
+    image: local/rbw-web-pinentry-main:0.1.0
+    pull_policy: never
+    container_name: rbw-web-pinentry-staging
+    user: "1002:1002"
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3088"
+      PROMPT_TTL_MS: "300000"
+      MAX_PENDING_SESSIONS: "16"
+      ALLOWED_USERS: operator
+      INTERNAL_ALLOWED_IPS: 127.0.0.1,::1,::ffff:127.0.0.1
+      PINENTRY_CLIENT_NAME: rbw-agent / web-pinentry
+      PINENTRY_SOURCE_NAME: openclaw-staging
+    networks:
+      proxy:
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3088/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  proxy:
+    external: true
+    name: ${CADDY_NETWORK:-caddy-proxy}
