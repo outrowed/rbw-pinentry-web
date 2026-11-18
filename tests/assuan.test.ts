@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "vitest";
 import { runAssuanSession } from "../src/cli/assuan.js";
@@ -190,4 +194,102 @@ describe("Assuan web-pinentry bridge", () => {
         assert.equal(stdoutText, "OK\nERR 83886179 Operation cancelled <Pinentry>\n");
         assert.match(stderrText, /Daemon request failed with HTTP 429/);
     });
+
+    it("warns on a closed stdout pipe without crashing the pinentry process", async () => {
+        const stdin = new PassThrough();
+        const stdout = new PassThrough();
+        const stderr = new PassThrough();
+        let stderrText = "";
+        stderr.on("data", (chunk: Buffer) => stderrText += chunk.toString("utf8"));
+        const originalStderrWrite = process.stderr.write.bind(process.stderr);
+        const processWarnings: string[] = [];
+        process.stderr.write = ((chunk: string | Uint8Array) => {
+            processWarnings.push(String(chunk));
+
+            return true;
+        }) as typeof process.stderr.write;
+        stdout.write = (() => {
+            const error = new Error("write EPIPE") as NodeJS.ErrnoException;
+            error.code = "EPIPE";
+            throw error;
+        }) as typeof stdout.write;
+
+        try {
+            await runAssuanSession(stdin, stdout, stderr, {
+                daemonUrl: "http://127.0.0.1:3088",
+                timeoutMs: 1_000,
+                fetchImpl: async () => response(503, {}),
+            });
+        }
+        finally {
+            process.stderr.write = originalStderrWrite;
+        }
+
+        const warnings = processWarnings.join("");
+        assert.match(warnings, /stdout closed \(EPIPE\)/);
+        assert.match(warnings, /rbw-agent may log a socket 'Broken pipe' panic/);
+        assert.equal(stderrText.includes("fatal"), false);
+    });
+
+    it("warns that an agent socket panic is upstream when a real subprocess is terminated mid-prompt", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "pinentry-signal-"));
+        const script = join(directory, "pinentry.mjs");
+        const stderrPath = join(directory, "stderr.log");
+        const daemonUrl = "http://127.0.0.1:3088";
+        await writeFile(script, [
+            `import { runAssuanSession } from ${JSON.stringify(resolve("dist-server/src/cli/assuan.js"))};`,
+            "import { PassThrough } from 'node:stream';",
+            "import { createWriteStream } from 'node:fs';",
+            "const out = createWriteStream(process.argv[2]);",
+            "const stdin = new PassThrough();",
+            "const stdout = new PassThrough();",
+            "const running = runAssuanSession(stdin, stdout, out, {",
+            `  daemonUrl: ${JSON.stringify(daemonUrl)},`,
+            "  timeoutMs: 30000,",
+            "  fetchImpl: async (input) => {",
+            "    const url = String(input);",
+            "    if (url.endsWith('/internal/request')) {",
+            "      return new Response(JSON.stringify({ sessionId: 'a'.repeat(64), expiresAt: Date.now() + 60000 }), { status: 201 });",
+            "    }",
+            "    if (url.includes('/internal/abandon/')) {",
+            "      return new Response(JSON.stringify({ abandoned: true }), { status: 200 });",
+            "    }",
+            "    return new Promise(() => {});",
+            "  },",
+            "});",
+            "stdin.write('GETPIN\\n');",
+            "setInterval(() => {}, 1000);",
+            "await running;",
+        ].join("\n"));
+        const child = spawn(process.execPath, [script, stderrPath], { stdio: "ignore" });
+
+        try {
+            // Wait until the child has actually created the prompt before
+            // signalling it; Node startup time varies under a test runner.
+            const deadline = Date.now() + 10_000;
+
+            while (Date.now() < deadline) {
+                const current = await readFile(stderrPath, "utf8").catch(() => "");
+
+                if (current.includes("Approval required")) {
+                    break;
+                }
+
+                await new Promise(resolveWait => setTimeout(resolveWait, 50));
+            }
+
+            child.kill("SIGTERM");
+            await new Promise<void>(resolveExit => child.once("exit", () => resolveExit()));
+            const text = await readFile(stderrPath, "utf8");
+            assert.match(text, /terminated while a prompt was pending/, `GOT: ${JSON.stringify(text)}`);
+            assert.match(text, /upstream unchecked write/);
+        }
+        finally {
+            child.kill("SIGKILL");
+            await rm(directory, {
+                recursive: true,
+                force: true,
+            });
+        }
+    }, 15_000);
 });
