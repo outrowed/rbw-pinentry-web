@@ -19,7 +19,6 @@
         "test:integration": "pnpm build:server && vitest run tests/integration/rbw.test.ts",
         "test:watch": "pnpm build:server && vitest",
         "lint": "eslint . && biome lint .",
-        "validate:compose": "docker compose -f deploy/staging.compose.yml config --quiet",
         "lint:fix": "biome lint --write . && eslint --fix .",
         "format": "biome format --write . && eslint --fix .",
         "format:check": "biome format . && eslint .",

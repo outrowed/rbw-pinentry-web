@@ -13,8 +13,8 @@ if (args.includes("--help") || args.includes("-h")) {
     process.exit(0);
 }
 
-const timeoutMsRaw = Number.parseInt(process.env.WEB_PINENTRY_TIMEOUT_MS ?? "305000", 10);
-const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 305_000;
+const timeoutMsRaw = Number.parseInt(process.env.WEB_PINENTRY_TIMEOUT_MS ?? "905000", 10);
+const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? timeoutMsRaw : 905_000;
 
 void runAssuanSession(process.stdin, process.stdout, process.stderr, {
     daemonUrl: process.env.WEB_PINENTRY_DAEMON_URL ?? "http://127.0.0.1:3088",

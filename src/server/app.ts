@@ -302,7 +302,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DaemonConfig {
     return {
         host: env.HOST ?? "0.0.0.0",
         port: parseNumber(env.PORT, 3088),
-        promptTtlMs: parseNumber(env.PROMPT_TTL_MS, 300_000, 1000),
+        promptTtlMs: parseNumber(env.PROMPT_TTL_MS, 900_000, 1000),
         maxPendingSessions: parseNumber(env.MAX_PENDING_SESSIONS, 16),
         allowedUsers: csvSet(env.ALLOWED_USERS, ["operator"]),
         internalAllowedIps: csvSet(env.INTERNAL_ALLOWED_IPS, ["127.0.0.1", "::1", "::ffff:127.0.0.1"]),

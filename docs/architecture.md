@@ -56,17 +56,4 @@ The Vite dev server proxies `/api` and `/internal` to the Fastify server on port
 
 The harness generates a fresh random `RBW_PROFILE` and temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, and `XDG_RUNTIME_DIR`. This keeps the test agent socket, cache, config, device ID, and logs separate from the real `rbw` profile. A temporary executable wrapper invokes the compiled CLI. After each test the harness stops its own profile agent and removes the temporary directory. Set `RBW_TEST_BINARY` if `rbw` is not on `PATH`; never point it at a wrapper that silently drops the test environment variables.
 
-This is real `rbw`/Assuan/Fastify integration against a fake Vaultwarden protocol endpoint, not an authentication test of the deployed Vaultwarden or Caddy/Authelia route. Live staging still needs its own separately authorized check.
-
-## Deployment migration boundary
-
-The current service and domain route have not been changed. An isolated Compose candidate exists at `deploy/staging.compose.yml`; it uses no published host ports, no public reverse-proxy route, and its own container name. It is not deployed. For a private test, run it without changing `rbw`'s configured pinentry, and request an internal prompt only from the allowlisted OpenClaw address. Keep the legacy container and its original CLI wiring as rollback until all of the following are verified:
-
-1. End-to-end approved/cancelled/expired prompts against the installed `rbw` 1.15.0 and Vaultwarden/Authelia.
-2. Login followed by two-factor as two sequential pinentry requests, with their types clear to the user.
-3. Two independent client processes resolving in either order without cross-delivery.
-4. Cleanup on CLI disconnect, browser cancellation, timeout and daemon shutdown.
-5. Public route and internal API isolation with the actual Caddy network and Authelia identity.
-6. Container health/read-only deployment, desktop/mobile layout, and operational rollback.
-
-A migration should be an explicit staged change: deploy the new instance alongside the current service, verify through a private preview, then switch the route and CLI bridge only after real-flow acceptance. No production switch is part of the current development task.
+This is real `rbw`/Assuan/Fastify integration against a fake Vaultwarden protocol endpoint, not an authentication test of the deployed Vaultwarden or Caddy/Authelia route. The live service is managed separately in `/home/taruna/srv/rbw-web-pinentry`; see workspace `INFRA.md` for its current deployment details.
