@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PromptKind, PromptView } from "../../shared/protocol.js";
+import {
+    type AlertSupport,
+    currentPermission,
+    readAlertPreference,
+    selectNewRequests,
+    shouldAnnounce,
+    showRequestNotification,
+    writeAlertPreference,
+} from "./notifications.js";
 
 type RequestRecord = PromptView;
 type Status = "connecting" | "live" | "offline";
@@ -49,10 +58,12 @@ function useRequests(): {
     requests: RequestRecord[];
     status: Status;
     error: string | null;
+    loaded: boolean;
 } {
     const [requests, setRequests] = useState<RequestRecord[]>([]);
     const [status, setStatus] = useState<Status>("connecting");
     const [error, setError] = useState<string | null>(null);
+    const [loaded, setLoaded] = useState(false);
 
     const refresh = useCallback(async () => {
         const response = await fetch("/api/requests", { cache: "no-store" });
@@ -64,6 +75,7 @@ function useRequests(): {
         const payload = await response.json() as { requests: RequestRecord[] };
         setRequests(payload.requests);
         setError(null);
+        setLoaded(true);
     }, []);
 
     useEffect(() => {
@@ -109,6 +121,7 @@ function useRequests(): {
         requests,
         status,
         error,
+        loaded,
     };
 }
 
@@ -210,6 +223,20 @@ function RequestCard({ request, onResolve }: {
     );
 }
 
+/**
+ * Asks for notification permission from a user gesture, since browsers refuse
+ * the request otherwise. Only records the preference when it was granted.
+ */
+async function requestAlertPermission(): Promise<AlertSupport> {
+    if (currentPermission() === "unsupported") {
+        return "unsupported";
+    }
+
+    const result = await Notification.requestPermission();
+
+    return result;
+}
+
 function BrandMark(): React.JSX.Element {
     return (
         <div className="brand">
@@ -229,10 +256,68 @@ function BrandMark(): React.JSX.Element {
 }
 
 export function App(): React.JSX.Element {
-    const { requests, status, error } = useRequests();
+    const { requests, status, error, loaded } = useRequests();
     const [notice, setNotice] = useState<string | null>(null);
     const [showIntro, setShowIntro] = useState(true);
     const [filter, setFilter] = useState<KindFilter>("all");
+    const [permission, setPermission] = useState<AlertSupport>(() => currentPermission());
+    const [alertsOn, setAlertsOn] = useState(() => readAlertPreference() && currentPermission() === "granted");
+    const announced = useRef<Set<string> | null>(null);
+
+    useEffect(() => {
+        if (!loaded) {
+            return;
+        }
+
+        if (announced.current === null) {
+            // Seed from the first successful snapshot: requests already waiting
+            // when the page opened are not news.
+            announced.current = new Set(requests.map(request => request.sessionId));
+
+            return;
+        }
+
+        const fresh = selectNewRequests(announced.current, requests);
+
+        for (const request of requests) {
+            announced.current.add(request.sessionId);
+        }
+
+        if (fresh.length === 0) {
+            return;
+        }
+
+        if (!shouldAnnounce(permission, alertsOn, document.visibilityState, document.hasFocus())) {
+            return;
+        }
+
+        for (const request of fresh) {
+            showRequestNotification(request, KIND_LABELS[request.kind]);
+        }
+    }, [loaded, requests, permission, alertsOn]);
+
+    const toggleAlerts = useCallback(async (): Promise<void> => {
+        if (alertsOn) {
+            writeAlertPreference(false);
+            setAlertsOn(false);
+
+            return;
+        }
+
+        const result = await requestAlertPermission();
+        setPermission(result);
+
+        if (result === "granted") {
+            writeAlertPreference(true);
+            setAlertsOn(true);
+
+            return;
+        }
+
+        if (result === "denied") {
+            setNotice("Notifications are blocked for this site. Allow them in your browser's site settings, then try again.");
+        }
+    }, [alertsOn]);
 
     const visibleRequests = useMemo(() => (
         filter === "all" ? requests : requests.filter(request => request.kind === filter)
@@ -291,9 +376,24 @@ export function App(): React.JSX.Element {
                             Pending requests
                             <span className="count-badge">{requests.length}</span>
                         </h2>
-                        <div className="panel-status" role="status">
-                            <span className={`status-dot status-${status}`} aria-hidden="true" />
-                            {statusLabel}
+                        <div className="heading-controls">
+                            <div className="panel-status" role="status">
+                                <span className={`status-dot status-${status}`} aria-hidden="true" />
+                                {statusLabel}
+                            </div>
+                            {permission !== "unsupported" && (
+                                <button
+                                    type="button"
+                                    className={`alert-toggle ${alertsOn ? "alert-toggle-on" : ""}`}
+                                    aria-pressed={alertsOn}
+                                    title={alertsOn
+                                        ? "Desktop alerts are on while this tab is in the background"
+                                        : "Show a desktop notification when a request arrives"}
+                                    onClick={() => void toggleAlerts()}
+                                >
+                                    {alertsOn ? "Alerts on" : "Alerts off"}
+                                </button>
+                            )}
                         </div>
                     </header>
                     <nav className="filter-bar" aria-label="Filter requests by type">

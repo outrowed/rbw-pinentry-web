@@ -195,6 +195,41 @@
     white-space: nowrap;
 }
 
+.heading-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.alert-toggle {
+    border: 1px solid #b56e50;
+    border-radius: 0;
+    background: #fff8ee;
+    padding: 0.05rem 0.35rem;
+    color: #6b3a28;
+    font-family: "Helvetica Neue", system-ui;
+    font-size: 0.63rem;
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.alert-toggle:hover {
+    border-color: #800000;
+    color: #800000;
+}
+
+.alert-toggle-on {
+    border-color: #347535;
+    background: #eef6ec;
+    color: #2c6129;
+}
+
+.alert-toggle-on:hover {
+    border-color: #2c6129;
+    color: #2c6129;
+}
+
 .status-dot {
     width: 0.43rem;
     height: 0.43rem;
