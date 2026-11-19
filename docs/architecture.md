@@ -2,7 +2,7 @@
 
 ## Project shape
 
-`rbw-web-pinentry` is the active Fastify/React implementation. The previous server-rendered service is preserved at `rbw-web-pinentry-legacy`. The process serves the compiled React/Vite frontend and the internal HTTP API consumed by a GnuPG Assuan-compatible CLI bridge.
+`rbw-web-pinentry` is the active Fastify/React implementation. The process serves the compiled React/Vite frontend and the internal HTTP API consumed by a GnuPG Assuan-compatible CLI bridge.
 
 - `src/client/`: React 19 inbox UI, built by Vite with Tailwind CSS v4.
 - `src/server/`: Fastify API, memory-only prompt sessions, authentication checks, static serving and SSE updates.
@@ -16,16 +16,12 @@ The inbox borrows early-web bulletin-board conventions: centered brand/header, w
 ## Request flow
 
 1. A client launches `web-pinentry`; the bridge parses Assuan `SETTITLE`, `SETPROMPT`, `SETDESC`, `SETERROR` and `GETPIN`.
-2. On `GETPIN`, the bridge creates an internal request with client/source/PID metadata and prints only a short request ID to stderr (never the bearer token). It long-polls a distinct internal request ID.
+2. On `GETPIN`, the bridge creates an internal request with client/source/PID metadata and prints only a short request ID to stderr. It long-polls a distinct internal request ID.
 3. Fastify stores each request independently in RAM and publishes inbox changes through `/api/events` (SSE).
-4. The React inbox shows active prompts in arrival order. The authenticated user's action resolves exactly one prompt by request ID; the associated waiter receives the value or cancellation. Each request is identified by a random 256-bit ID; the inbox uses the authentication gate plus that per-request ID and does not expose any additional approval token.
+4. The React inbox shows active prompts in arrival order. The authenticated user's action resolves exactly one prompt by request ID; the associated waiter receives the value or cancellation. Each request is identified by a random 256-bit ID, and the inbox authenticates through the proxy identity gate plus that per-request ID.
 5. When a client wait aborts or times out, it best-effort abandons the pending request. TTL expiry remains a server-side cleanup fallback.
 
 The inbox shows the request's client name, source label, PID, prompt/description/error, start time, and live TTL countdown. Prompt kind is inferred from the Assuan-provided title and description; it is a display hint, not a cryptographic identity assertion.
-
-## Legacy comparison
-
-The previous server-rendered service is preserved in the `rbw-web-pinentry-legacy` checkout and remains the deployed backend until migration is verified. Its package name and specification are now marked legacy; the deployed container keeps its original image and service name.
 
 ## Security boundaries
 
@@ -52,8 +48,53 @@ The Vite dev server proxies `/api` and `/internal` to the Fastify server on port
 
 ### Isolated rbw integration harness
 
-`pnpm test` builds the CLI bridge before running Vitest. `tests/protocol.test.ts` covers prompt-kind inference, including rbw's password, authenticator, email-code, YubiKey, and API-key labels. `tests/daemon.test.ts` opens a real Fastify `/api/events` SSE stream and checks the initial snapshot, prompt creation, cancellation, and abandonment with an authenticated `Remote-User` header. It also verifies HTTP failures for capacity, malformed/oversized input, unknown or stale requests, invalid actions, and expiry. `tests/assuan.test.ts` checks CLI error mapping for request rejection, cancelled/expired/abandoned waits, and unexpected daemon failures. `tests/integration/rbw.test.ts` starts the installed `rbw` 1.15.0 binary against a loopback-only synthetic Vaultwarden fixture. It exercises a rejected master password followed by a retry, then an authenticator-code challenge, a synthetic database sync, a lock/unlock round trip, and an SSH signing request through the agent socket that triggers a fresh unlock prompt using the real Assuan bridge. All values are test fixtures; no real vault, account, or credentials are used.
+The suite mixes fast unit tests with one slow test that drives the real `rbw` binary.
+Running `pnpm test` compiles the bridge first, then runs Vitest.
 
-The harness generates a fresh random `RBW_PROFILE` and temporary `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, and `XDG_RUNTIME_DIR`. This keeps the test agent socket, cache, config, device ID, and logs separate from the real `rbw` profile. A temporary executable wrapper invokes the compiled CLI. After each test the harness stops its own profile agent and removes the temporary directory. Set `RBW_TEST_BINARY` if `rbw` is not on `PATH`; never point it at a wrapper that silently drops the test environment variables.
+| File | What it covers |
+| --- | --- |
+| `tests/protocol.test.ts` | Prompt-kind inference from the Assuan title and description: unlock, login (including device registration), two-factor (authenticator, email PIN, YubiKey, TOTP), API key, confirmation, and the unrecognized fallback |
+| `tests/session-store.test.ts` | Session lifecycle: concurrent prompts with separate expiry, resolving the right waiter by request ID, change notification, capacity limits, stale-id rejection, and cleanup of aborted and abandoned clients without disturbing the others |
+| `tests/daemon.test.ts` | The Fastify HTTP surface against a real server: the authenticated `/api/events` SSE snapshot and lifecycle, creation, cancellation, and abandonment, plus error responses for proxy-forwarded internal calls, capacity (`429`), malformed JSON, oversized bodies (`413`), unknown waiters (`404`), stale actions (`410`), invalid actions, and TTL expiry (`408`) |
+| `tests/assuan.test.ts` | The bridge: correct Assuan encoding and source metadata, abandoning on wait timeout, HTTP-status-to-error mapping without leaking a secret, request rejection, the closed-stdout warning, and the upstream socket-panic warning when a real subprocess is killed mid-prompt |
+| `tests/integration/rbw.test.ts` | One end-to-end path through the real `rbw` 1.15.0 binary against a synthetic Vaultwarden |
 
-This is real `rbw`/Assuan/Fastify integration against a fake Vaultwarden protocol endpoint, not an authentication test of the deployed Vaultwarden or Caddy/Authelia route. The live service is managed separately in `/home/taruna/srv/rbw-web-pinentry`; see workspace `INFRA.md` for its current deployment details.
+#### What the integration test actually does
+
+It walks a full login-to-signing path, not just a single prompt:
+
+1. Registers and logs in against the synthetic Vaultwarden, rejecting one wrong
+   master password first and retrying to prove the error path works.
+2. Answers a two-factor challenge (the authenticator-code prompt).
+3. Syncs and stores a synthetic SSH key.
+4. Locks and unlocks the vault, then signs an SSH challenge through the
+   `rbw-agent` socket, which raises a fresh unlock prompt through the bridge.
+
+All values are fixtures. No real vault, account, or credential is involved.
+
+#### How isolation works
+
+Each run gets a fresh temporary directory with its own `HOME`,
+`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, and a
+random `RBW_PROFILE`. That keeps the test's agent socket, cache, config, device
+ID, and logs separate from your real `rbw` profile.
+
+`rbw` is pointed at a small generated `sh` wrapper that execs the compiled
+bridge, so the test exercises the same entry point a real installation uses.
+
+Teardown stops that profile's agent, closes the daemon and the fixture server,
+and removes the temporary directory - including the generated SSH key. If a run
+is interrupted, check for a leftover `rbw` agent started from a temporary
+profile before assuming your own agent is at fault.
+
+Set `RBW_TEST_BINARY` to test a different `rbw` build. Never point it at a
+wrapper that drops the test environment variables; that would run against your
+real profile instead of the isolated one.
+
+#### What this suite does not prove
+
+It is real `rbw`/Assuan/Fastify integration, but the Vaultwarden in front of it is
+a local fixture. It does not verify your actual Vaultwarden server, nor the
+Caddy/Authelia route in front of the daemon. The live service is managed
+separately in `/home/taruna/srv/rbw-web-pinentry`; see workspace `INFRA.md` for
+its current deployment details.
